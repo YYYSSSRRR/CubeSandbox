@@ -163,6 +163,12 @@ func CreateSandbox(ctx context.Context, req *types.CreateCubeSandboxReq) (rsp *t
 	createCtx.Wait()
 	createCtx.endTime = time.Now()
 
+	// Report the end-to-end latency of one successful sandbox creation
+	// (queuing, scheduling and creating); P50/P95 are derived from it.
+	if rsp.Ret.RetCode == int(errorcode.ErrorCode_Success) {
+		scheduler.RecordSandboxCreateLatency(createCtx.endTime.Sub(createCtx.startTime))
+	}
+
 	go createCtx.dealMetric()
 	return
 }

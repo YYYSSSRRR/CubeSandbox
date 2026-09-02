@@ -257,6 +257,22 @@ type SchedulerConf struct {
 	// OvercommitRatioByType overrides OvercommitRatio for specific instance
 	// types and takes precedence over the global ratio.
 	OvercommitRatioByType map[string]OvercommitRatioConf `yaml:"overcommit_ratio_conf"`
+
+	// Metrics configures the enhanced scheduler metrics collection (cluster
+	// utilization, node balance, schedule success, sandbox create latency,
+	// template locality, queue metrics). When nil or Metrics.Enabled is false
+	// the collection stays off and scheduling behaves exactly as before.
+	Metrics *SchedulerMetricsConf `yaml:"metrics"`
+}
+
+// SchedulerMetricsConf configures the enhanced scheduler metrics.
+type SchedulerMetricsConf struct {
+	// Enabled turns the enhanced metrics collection on/off. Defaults to false.
+	Enabled bool `yaml:"enabled"`
+
+	// ScheduleLatencySampleSize is the ring-buffer size for sandbox create
+	// latency samples (P50/P95/P99). <=0 falls back to the default (10000).
+	ScheduleLatencySampleSize int `yaml:"schedule_latency_sample_size"`
 }
 
 var defaultNodeAffinitySelectorAllowedKeys = []string{

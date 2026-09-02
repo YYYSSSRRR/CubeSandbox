@@ -17,31 +17,43 @@ import (
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/ret"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/utils"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/errorcode"
+	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/localcache"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/scheduler/selctx"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/selector/filter"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/selector/score"
 )
 
 func Select(selCtx *selctx.SelectorCtx) (nodes *node.Node, err error) {
+	// step names the phase that failed, to distinguish prefilter/filter/score failures.
+	step := "select"
 	defer func() {
 		if r := recover(); r != nil {
 			log.G(selCtx.Ctx).Fatalf("Select panic:%+v", string(debug.Stack()))
 			err = ret.Errorf(errorcode.ErrorCode_MasterInternalError, "Select panic:%s", r)
 		}
+		if err != nil {
+			recordScheduleFailure(step)
+			return
+		}
+		recordScheduleSuccess()
+		recordTemplateLocalityHit(selCtx, nodes)
 	}()
 
 	if err := runPreFilter(selCtx); err != nil {
 		if shouldSkipBackoffForTemplate(selCtx) {
+			step = "prefilter"
 			return nil, err
 		}
 
 		if err = runBackoffFilter(selCtx); err != nil {
+			step = "prefilter"
 			return nil, err
 		}
 	}
 
 	if err := runFilter(selCtx, scheduler.filter); err != nil {
 		if shouldSkipBackoffForTemplate(selCtx) {
+			step = "filter"
 			return nil, err
 		}
 
@@ -50,10 +62,21 @@ func Select(selCtx *selctx.SelectorCtx) (nodes *node.Node, err error) {
 	}
 
 	if err := runScoreFilter(selCtx, scheduler.score); err != nil {
+		step = "score"
 		return nil, err
 	}
 
 	return selCtx.LeastRandomSelect(config.GetConfig().Scheduler.PrioritySelectNum), nil
+}
+
+// recordTemplateLocalityHit reports whether the template image already exists
+// on the finally chosen node (a "local hit", i.e. no remote fetch needed).
+func recordTemplateLocalityHit(selCtx *selctx.SelectorCtx, host *node.Node) {
+	if selCtx == nil || host == nil || selCtx.ReqRes == nil || selCtx.ReqRes.TemplateID == "" {
+		return
+	}
+	local := localcache.GetImageStateByNode(selCtx.ReqRes.TemplateID, host.ID()) != nil
+	recordTemplateHit(local, selCtx.ReqRes.TemplateID)
 }
 
 func shouldSkipBackoffForTemplate(selCtx *selctx.SelectorCtx) bool {

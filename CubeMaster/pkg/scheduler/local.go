@@ -17,6 +17,7 @@ import (
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/constants"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/recov"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/localcache"
+	schedmetrics "github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/scheduler/metrics"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/task"
 	"github.com/tencentcloud/CubeSandbox/pkgs/CubeLog"
 )
@@ -29,6 +30,11 @@ type local struct {
 }
 
 var l *local
+
+// enhancedMetrics is the optional enhanced scheduler metrics manager. It is
+// enabled via the scheduler.metrics config; when disabled it stays nil and all
+// recording hooks are no-ops with zero overhead.
+var enhancedMetrics *schedmetrics.MetricsManager
 
 func initTask(ctx context.Context) error {
 	l = &local{
@@ -45,14 +51,62 @@ func initTask(ctx context.Context) error {
 	recov.GoWithRecover(l.collectMetric)
 	recov.GoWithRecover(l.reportMetric)
 	recov.GoWithRecover(l.monitorLimit)
+	startEnhancedMetrics()
 	return nil
 }
 
 func Stop(ctx context.Context) {
 	close(l.stop)
+	if enhancedMetrics != nil {
+		enhancedMetrics.Stop()
+	}
 	for _, v := range l.bufferTaskMap {
 		v.bufferQ.GraceFullStop(ctx)
 	}
+}
+
+// startEnhancedMetrics creates and starts the enhanced metrics manager.
+func startEnhancedMetrics() {
+	enhancedMetrics = schedmetrics.NewMetricsManager(buildMetricsConfig())
+	enhancedMetrics.Start()
+	// Inject the queue data source after built-in collectors are registered by
+	// Start.
+	enhancedMetrics.SetQueueStatsFunc(queueStatsSnapshot)
+}
+
+// buildMetricsConfig builds the metrics config from scheduler.metrics. When
+// disabled all collectors are turned off, leaving the manager a no-op shell
+// that produces no traces.
+func buildMetricsConfig() *schedmetrics.MetricsConfig {
+	cfg := schedmetrics.DefaultMetricsConfig()
+
+	sc := config.GetConfig().Scheduler
+	if sc == nil || sc.Metrics == nil || !sc.Metrics.Enabled {
+		cfg.ClusterUtilization.Enabled = false
+		cfg.NodeBalance.Enabled = false
+		cfg.ScheduleSuccess.Enabled = false
+		cfg.ScheduleLatency.Enabled = false
+		cfg.TemplateCache.Enabled = false
+		cfg.QueueMetrics.Enabled = false
+		return cfg
+	}
+	if sc.Metrics.ScheduleLatencySampleSize > 0 {
+		cfg.ScheduleLatency.SampleSize = sc.Metrics.ScheduleLatencySampleSize
+	}
+	return cfg
+}
+
+// queueStatsSnapshot snapshots the current BufferQueue state per instance type.
+func queueStatsSnapshot() map[string]int64 {
+	if l == nil {
+		return nil
+	}
+	stats := make(map[string]int64, len(l.bufferTaskMap)*2)
+	for product, bt := range l.bufferTaskMap {
+		stats[product+"_buffertask_len"] = int64(bt.Len())
+		stats[product+"_buffertask_workings"] = int64(bt.Workings())
+	}
+	return stats
 }
 
 type buffertask struct {
@@ -114,6 +168,38 @@ func AddBufferTask(x interface{}, product string) {
 		bufferQ = l.bufferTaskMap[constants.DefaultInstanceTypeName]
 	}
 	bufferQ.Push(x)
+}
+
+// ---- Enhanced scheduler metrics: exported recording wrappers (no-op when disabled) ----
+
+func recordScheduleSuccess() {
+	if enhancedMetrics != nil {
+		enhancedMetrics.RecordScheduleSuccess()
+	}
+}
+
+func recordScheduleFailure(reason string) {
+	if enhancedMetrics != nil {
+		enhancedMetrics.RecordScheduleFailure(reason)
+	}
+}
+
+func recordCreateLatency(d time.Duration) {
+	if enhancedMetrics != nil {
+		enhancedMetrics.RecordCreateLatency(d)
+	}
+}
+
+func recordTemplateHit(local bool, templateID string) {
+	if enhancedMetrics != nil {
+		enhancedMetrics.RecordCacheHit(local, templateID)
+	}
+}
+
+// RecordSandboxCreateLatency records one successful end-to-end sandbox
+// creation. It is called by service/sandbox once creation completes.
+func RecordSandboxCreateLatency(d time.Duration) {
+	recordCreateLatency(d)
 }
 
 func (l *local) collectMetric() {
