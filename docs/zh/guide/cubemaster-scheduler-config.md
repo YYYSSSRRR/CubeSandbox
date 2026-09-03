@@ -120,6 +120,22 @@ scheduler:
 | `profiles.<name>.scorers` / `score.scorers` | 针对单个 scorer 的 `weight` / `disable` 覆盖，叠加在其 `plugin_conf` 之上。 |
 | 自定义插件 | 实现 `filter.Selector` / `score.Selector` 后按名注册（`filter.Register` / `score.Register`），即可像内置插件一样出现在上表列表中。可运行示例见 [`examples/cubemaster-scheduler-plugin`](../../../examples/cubemaster-scheduler-plugin/README_zh.md)。 |
 
+### 内置 Agent 策略 Profile
+
+三套即用 Profile 已内置到配置默认值（仅当 YAML 未定义同名时才启用）。开启只需一行——
+其定义与相关 scorer 的 `plugin_conf` 默认值会自动补全：
+
+```yaml
+scheduler:
+  active_profile: agent-burst   # 或 agent-template-heavy / agent-mixed
+```
+
+| Profile | 适用 Agent 负载 | 策略取向 |
+|---------|-----------------|----------|
+| `agent-burst` | 高并发、短生命周期沙箱 | 跨节点摊开、避开热点（`realtime_create_num` + 实时均衡），追求低 P95 |
+| `agent-template-heavy` | 同一模板大量重复创建 | 最大化本地镜像命中（`image_score` 为主），避免拉镜像冷启动 |
+| `agent-mixed` | 混合规格、长期驻留会话 | 均衡装箱与亲和，追求稳定、减少碎片 |
+
 > 注意：内置 scorer（例如 `real_time_weighted_average`）仍从
 > `score.plugin_conf.<name>` 读取默认值，且该 block 缺失时启动会 panic。即使你同时
 > 配置了 `score.scorers`，也要为每个启用的内置 scorer 保留其 `plugin_conf`。

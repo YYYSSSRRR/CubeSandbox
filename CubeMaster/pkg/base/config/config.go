@@ -1131,6 +1131,9 @@ func preHandleScheduler(config *Config) error {
 	if config.Scheduler == nil {
 		config.Scheduler = &WrapperSchedulerConf{}
 	}
+	// Make the built-in agent strategy profiles and minimal scorer plugin_conf
+	// defaults available; operator-supplied values always win.
+	ensureDefaultSchedulerProfiles(&config.Scheduler.SchedulerConf)
 
 	preHandOverhead(config)
 

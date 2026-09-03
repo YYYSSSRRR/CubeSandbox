@@ -124,6 +124,23 @@ scheduler:
 | `profiles.<name>.scorers` / `score.scorers` | Per-scorer `weight` / `disable` overrides, applied on top of the scorer's `plugin_conf`. |
 | Custom plugins | Implement `filter.Selector` / `score.Selector`, register them by name (`filter.Register` / `score.Register`), and they behave like any built-in in the lists above. See the runnable example at [`examples/cubemaster-scheduler-plugin`](../../../examples/cubemaster-scheduler-plugin/README.md). |
 
+### Built-in agent strategy profiles
+
+Three ready-made profiles are embedded in the configuration defaults (used only
+when the YAML does not define the same name). Enable one with a single line —
+the definitions and their scorer `plugin_conf` defaults are filled in for you:
+
+```yaml
+scheduler:
+  active_profile: agent-burst   # or agent-template-heavy / agent-mixed
+```
+
+| Profile | For this agent load | Strategy |
+|---------|---------------------|----------|
+| `agent-burst` | high-concurrency, short-lived sandboxes | spread across nodes, off hot spots (`realtime_create_num` + real-time balancing); low P95 |
+| `agent-template-heavy` | many copies of the same template | maximise local image hits (`image_score` dominant) to skip image pulls |
+| `agent-mixed` | mixed specs, long-lived sessions | balance packing and affinity for stability and fewer fragments |
+
 > Note: built-in scorers (for example `real_time_weighted_average`) still read
 > their defaults from `score.plugin_conf.<name>` and panic at startup when that
 > block is missing. Keep the `plugin_conf` block for every enabled built-in
