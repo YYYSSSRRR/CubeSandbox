@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/node"
-	CubeLog "github.com/tencentcloud/CubeSandbox/cubelog"
+	CubeLog "github.com/tencentcloud/CubeSandbox/pkgs/CubeLog"
 )
 
 func testNodes() node.NodeList {

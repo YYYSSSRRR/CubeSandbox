@@ -86,6 +86,49 @@ scheduler:
 | `disk_usage_max_percent` | Threshold used by the `disk` filter and backoff path to avoid placing more sandboxes on nearly full machines. |
 | `affinityconf` / `node_affinity_selector_allowed_keys` | Controls affinity and constraints by cluster label, zone, CPU type, instance type, and other allowed selector keys. |
 
+## Strategy profiles, per-scorer overrides, and custom plugins
+
+Every scheduling plugin is registered by name and enabled from YAML — including
+plugins you write yourself. Two mechanisms tune and compose them without code
+changes:
+
+- `score.scorers.<name>` overrides a scorer's `weight` / `disable`. Omitted
+  fields fall back to the scorer's own `plugin_conf`, so adding overrides never
+  requires you to duplicate the plugin defaults.
+- `profiles` + `active_profile` group an entire filter/scorer set into a named
+  strategy. When `active_profile` is empty, the legacy
+  `filter.enable_filters` / `score.enable_scorers` + `plugin_conf` fields are
+  used and existing configurations behave exactly as before. An unknown
+  `active_profile` also falls back to the legacy fields instead of disabling
+  scheduling.
+
+```yaml
+scheduler:
+  active_profile: "burst"                 # leave empty to use the legacy fields
+  profiles:
+    burst:                                # e.g. short-lived, high-concurrency agents
+      filters: [cpu, mem, template_locality, realtime_create_num]
+      scorers:
+        real_time_weighted_average: { weight: 1.0 }
+        affinity_score:             { weight: 0.6 }
+    template_heavy:                       # e.g. repeated creation of the same template
+      filters: [cpu, mem, template_locality]
+      scorers:
+        image_score: { weight: 2.0 }
+```
+
+| Field | Purpose |
+|-------|---------|
+| `active_profile` | Name of the profile to activate. Empty keeps the legacy fields; an unknown name falls back to them rather than disabling scheduling. |
+| `profiles.<name>.filters` | The filters enabled under that profile. |
+| `profiles.<name>.scorers` / `score.scorers` | Per-scorer `weight` / `disable` overrides, applied on top of the scorer's `plugin_conf`. |
+| Custom plugins | Implement `filter.Selector` / `score.Selector`, register them by name (`filter.Register` / `score.Register`), and they behave like any built-in in the lists above. See the runnable example at [`examples/cubemaster-scheduler-plugin`](../../../examples/cubemaster-scheduler-plugin/README.md). |
+
+> Note: built-in scorers (for example `real_time_weighted_average`) still read
+> their defaults from `score.plugin_conf.<name>` and panic at startup when that
+> block is missing. Keep the `plugin_conf` block for every enabled built-in
+> scorer even when you also set `score.scorers`.
+
 ## How node metadata affects scheduling
 
 Cubelet registers nodes and continuously reports status through CubeOps's `/internal/v1/node-agent` API. CubeOps persists this metadata to MySQL/Redis; CubeMaster syncs the node view from CubeOps every few seconds and keeps local cache snapshots for scheduling.

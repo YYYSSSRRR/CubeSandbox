@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/constants"
-	"github.com/tencentcloud/CubeSandbox/cubelog"
+	"github.com/tencentcloud/CubeSandbox/pkgs/CubeLog"
 )
 
 // CubeLogReporter reports each MetricPoint as one CubeLog.RequestTrace.

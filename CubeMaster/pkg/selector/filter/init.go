@@ -6,8 +6,6 @@
 package filter
 
 import (
-	"reflect"
-
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/config"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/node"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/scheduler/selctx"
@@ -19,29 +17,41 @@ type Selector interface {
 	ID() string
 }
 
-func NewSelector() []Selector {
-	conf := config.GetConfig().Scheduler
-	if conf == nil || conf.Filter == nil {
-		return []Selector{}
-	}
-	ss := make([]Selector, 0)
-	for _, name := range conf.Filter.EnableFilters {
-
-		fn := reflect.ValueOf(filters[name])
-
-		if !fn.IsValid() {
-			continue
+// Built-in filters self-register here so custom plugins registered from other
+// packages participate in the exact same registry.
+func init() {
+	must := func(name string, factory Factory) {
+		if err := Register(name, factory); err != nil {
+			panic(err)
 		}
-		ss = append(ss, fn.Call(nil)[0].Interface().(Selector))
 	}
-	return ss
+	must("cpu", func() Selector { return NewCpuFilter() })
+	must("mem", func() Selector { return NewMemFilter() })
+	must("template_locality", func() Selector { return NewTemplateLocalityFilter() })
+	must("realtime_create_num", func() Selector { return NewRealtimecreatelimit() })
+	must("disk", func() Selector { return NewDiskFilter() })
+	must("thirtparty", func() Selector { return NewThirtpartyFilter() })
 }
 
-var filters = map[string]interface{}{
-	"cpu":                 NewCpuFilter,
-	"mem":                 NewMemFilter,
-	"template_locality":   NewTemplateLocalityFilter,
-	"realtime_create_num": NewRealtimecreatelimit,
-	"disk":                NewDiskFilter,
-	"thirtparty":          NewThirtpartyFilter,
+func NewSelector() []Selector {
+	conf := config.GetConfig().Scheduler
+	if conf == nil {
+		return []Selector{}
+	}
+	return buildFilters(conf.ResolvePipeline().Filters)
+}
+
+// buildFilters constructs the filter plugins enabled by names, in the given
+// order. Unknown plugin names are skipped so a historical config never fails
+// to start.
+func buildFilters(names []string) []Selector {
+	ss := make([]Selector, 0, len(names))
+	for _, name := range names {
+		factory, ok := lookupFactory(name)
+		if !ok {
+			continue
+		}
+		ss = append(ss, factory())
+	}
+	return ss
 }

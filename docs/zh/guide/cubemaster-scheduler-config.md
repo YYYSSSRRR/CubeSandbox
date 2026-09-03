@@ -86,6 +86,44 @@ scheduler:
 | `disk_usage_max_percent` | `disk` filter 和 backoff 路径使用的磁盘水位阈值，用于避免继续调度到快满的机器。 |
 | `affinityconf` / `node_affinity_selector_allowed_keys` | 控制按 cluster label、zone、CPU 类型、机型等做亲和或约束选择。 |
 
+## 策略 Profile、单插件覆盖与自定义插件
+
+每个调度插件都按名字注册并从 YAML 启用——包括你自己写的插件。两个机制让你无需改代码
+即可调参与组合：
+
+- `score.scorers.<name>` 覆盖某 scorer 的 `weight` / `disable`；未设置的字段回退到该
+  scorer 自身的 `plugin_conf`，因此加覆盖项不需要重复插件默认值。
+- `profiles` + `active_profile` 把整套 filter/scorer 组合成具名策略。当
+  `active_profile` 为空时，仍使用旧的 `filter.enable_filters` /
+  `score.enable_scorers` + `plugin_conf` 字段，存量配置行为完全不变；未知的
+  `active_profile` 也会回退到旧字段而不是让调度失效。
+
+```yaml
+scheduler:
+  active_profile: "burst"                 # 留空则使用旧字段
+  profiles:
+    burst:                                # 例：短生命周期、高并发 Agent 负载
+      filters: [cpu, mem, template_locality, realtime_create_num]
+      scorers:
+        real_time_weighted_average: { weight: 1.0 }
+        affinity_score:             { weight: 0.6 }
+    template_heavy:                       # 例：同一模板重复创建
+      filters: [cpu, mem, template_locality]
+      scorers:
+        image_score: { weight: 2.0 }
+```
+
+| 字段 | 用途 |
+|------|------|
+| `active_profile` | 激活的 profile 名字。为空时走旧字段；名字未知时同样回退到旧字段，而不是让调度失效。 |
+| `profiles.<name>.filters` | 该 profile 启用的 filter 集合。 |
+| `profiles.<name>.scorers` / `score.scorers` | 针对单个 scorer 的 `weight` / `disable` 覆盖，叠加在其 `plugin_conf` 之上。 |
+| 自定义插件 | 实现 `filter.Selector` / `score.Selector` 后按名注册（`filter.Register` / `score.Register`），即可像内置插件一样出现在上表列表中。可运行示例见 [`examples/cubemaster-scheduler-plugin`](../../../examples/cubemaster-scheduler-plugin/README_zh.md)。 |
+
+> 注意：内置 scorer（例如 `real_time_weighted_average`）仍从
+> `score.plugin_conf.<name>` 读取默认值，且该 block 缺失时启动会 panic。即使你同时
+> 配置了 `score.scorers`，也要为每个启用的内置 scorer 保留其 `plugin_conf`。
+
 ## 节点元数据如何影响调度
 
 Cubelet 会通过 CubeOps 的 `/internal/v1/node-agent` 接口注册节点并持续上报状态。CubeOps 将这些数据持久化到 MySQL/Redis，CubeMaster 每隔几秒从 CubeOps 同步节点视图并维护本地缓存，调度时读取最新快照。

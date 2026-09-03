@@ -263,6 +263,15 @@ type SchedulerConf struct {
 	// template locality, queue metrics). When nil or Metrics.Enabled is false
 	// the collection stays off and scheduling behaves exactly as before.
 	Metrics *SchedulerMetricsConf `yaml:"metrics"`
+
+	// ActiveProfile selects a named scheduling strategy from Profiles. When
+	// empty (or the name is missing) scheduling falls back to the legacy
+	// Filter.EnableFilters / Score.EnableScorers + plugin_conf fields, keeping
+	// existing configs byte-for-byte compatible.
+	ActiveProfile string `yaml:"active_profile"`
+	// Profiles holds named scheduling strategies. Each profile fully defines
+	// the enabled filter/scorer set and per-scorer overrides.
+	Profiles map[string]*SchedulerProfileConf `yaml:"profiles"`
 }
 
 // SchedulerMetricsConf configures the enhanced scheduler metrics.
@@ -273,6 +282,65 @@ type SchedulerMetricsConf struct {
 	// ScheduleLatencySampleSize is the ring-buffer size for sandbox create
 	// latency samples (P50/P95/P99). <=0 falls back to the default (10000).
 	ScheduleLatencySampleSize int `yaml:"schedule_latency_sample_size"`
+}
+
+// SchedulerProfileConf is one named scheduling strategy. When active it fully
+// defines the enabled filter/scorer set; scorer overrides follow the same
+// semantics as SchedulerScoreConf.Scorers (nil fields fall back to the plugin's
+// own config). plugin_conf defaults and resource weights are still read from
+// the Score section when present.
+type SchedulerProfileConf struct {
+	Filters []string                   `yaml:"filters"`
+	Scorers map[string]*ScorerOverride `yaml:"scorers"`
+}
+
+// ScoreBinding binds one scorer name with its optional override.
+type ScoreBinding struct {
+	Name     string
+	Override *ScorerOverride
+}
+
+// ResolvedPipeline is the outcome of ResolvePipeline: the effective filter and
+// scorer lists (with per-scorer overrides) for the current config.
+type ResolvedPipeline struct {
+	// Profile is the active profile name, or "" when the legacy fields are used.
+	Profile string
+	Filters []string
+	Scorers []ScoreBinding
+}
+
+// ResolvePipeline decides which scheduling strategy is in effect. When
+// ActiveProfile names an existing profile it returns that profile's pipeline;
+// otherwise it falls back to the legacy Filter.EnableFilters /
+// Score.EnableScorers + Score.Scorers fields. A nil receiver yields an empty
+// pipeline.
+func (s *SchedulerConf) ResolvePipeline() ResolvedPipeline {
+	if s == nil {
+		return ResolvedPipeline{}
+	}
+	if s.ActiveProfile != "" {
+		if profile, ok := s.Profiles[s.ActiveProfile]; ok && profile != nil {
+			p := ResolvedPipeline{Profile: s.ActiveProfile}
+			p.Filters = append(p.Filters, profile.Filters...)
+			for name, override := range profile.Scorers {
+				p.Scorers = append(p.Scorers, ScoreBinding{Name: name, Override: override})
+			}
+			return p
+		}
+		// Unknown active profile: fall back to the legacy fields below so a
+		// stale active_profile never disables scheduling.
+	}
+
+	p := ResolvedPipeline{}
+	if s.Filter != nil {
+		p.Filters = append(p.Filters, s.Filter.EnableFilters...)
+	}
+	if s.Score != nil {
+		for _, name := range s.Score.EnableScorers {
+			p.Scorers = append(p.Scorers, ScoreBinding{Name: name, Override: s.Score.Scorers[name]})
+		}
+	}
+	return p
 }
 
 var defaultNodeAffinitySelectorAllowedKeys = []string{
@@ -569,7 +637,19 @@ type PostScoreConf struct {
 type SchedulerScoreConf struct {
 	EnableScorers   []string           `yaml:"enable_scorers"`
 	ResourceWeights map[string]float64 `yaml:"resource_weights"`
-	ScorePluginConf ScorePluginConf    `yaml:"plugin_conf"`
+	// Scorers holds per-scorer overrides (weight/disable) keyed by scorer name.
+	// It applies uniformly to built-in and user-registered scorers and takes
+	// precedence over the scorer's own plugin_conf. nil fields fall back to the
+	// scorer's own Weight()/Disable().
+	Scorers         map[string]*ScorerOverride `yaml:"scorers"`
+	ScorePluginConf ScorePluginConf            `yaml:"plugin_conf"`
+}
+
+// ScorerOverride overrides a scorer's weight and/or enabled state. Pointer
+// fields let an unset value fall back to the scorer's own config.
+type ScorerOverride struct {
+	Weight  *float64 `yaml:"weight"`
+	Disable *bool    `yaml:"disable"`
 }
 
 type ScorePluginConf struct {
