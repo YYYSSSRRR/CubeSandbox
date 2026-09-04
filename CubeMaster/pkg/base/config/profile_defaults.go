@@ -20,10 +20,11 @@ const (
 func f64p(v float64) *float64 { return &v }
 func boolp(v bool) *bool      { return &v }
 
-// defaultAgentProfiles returns the three built-in strategy profiles. They reuse
-// the registered filter/scorer plugins, so no plugin code is required to use
-// them; only scheduler.active_profile needs to be set in the configuration.
-func defaultAgentProfiles() map[string]*SchedulerProfileConf {
+// DefaultAgentProfiles returns the three built-in agent strategy profiles
+// (agent-burst, agent-template-heavy, agent-mixed). It is the single source of
+// truth for their definitions; the scheduler benchmark simulator reads the
+// same profiles so operator/weight changes stay in one place.
+func DefaultAgentProfiles() map[string]*SchedulerProfileConf {
 	return map[string]*SchedulerProfileConf{
 		ProfileAgentBurst: {
 			// Short-lived, high-concurrency agent sandboxes: spread requests
@@ -96,9 +97,9 @@ func ensureDefaultSchedulerProfiles(sc *SchedulerConf) {
 	}
 
 	if sc.Profiles == nil {
-		sc.Profiles = make(map[string]*SchedulerProfileConf, len(defaultAgentProfiles()))
+		sc.Profiles = make(map[string]*SchedulerProfileConf, len(DefaultAgentProfiles()))
 	}
-	for name, profile := range defaultAgentProfiles() {
+	for name, profile := range DefaultAgentProfiles() {
 		if _, exists := sc.Profiles[name]; !exists {
 			sc.Profiles[name] = profile
 		}
